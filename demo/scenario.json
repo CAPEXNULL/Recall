@@ -1,0 +1,7 @@
+{
+  "situation_a": "После обновления сервис Альфа отвечает медленно, очередь запросов растёт. Доступен откат версии.",
+  "outcome": {"success": true, "score": 0.8, "feedback": "После выполнения действия задержка снизилась, очередь перестала расти."},
+  "situation_b": "После обновления сервис Бета отвечает медленно, очередь запросов растёт. Доступен откат версии.",
+  "expected": {"first_source": "MODEL", "second_source": "EXPERIENCE", "minimum_similarity": 0.5, "model_calls": 1},
+  "note": "Demonstration uses a simulated operational situation and explicitly user-reported outcome; no infrastructure action is executed. The second service is new to session history."
+}

@@ -58,7 +58,7 @@ def critical_mismatch(action, original, current):
     action_words = {stem(word) for word in features_for(action) if word not in operators}
     for subject, clause in restrictions(current).items():
         if subject in action_words and subject not in previous:
-            return f'Новое ограничение для действия: «{clause}».'
+            return f'New constraint on the action: “{clause}”.'
     return None
 
 
@@ -106,13 +106,13 @@ class Recall:
 
     def decide(self, text):
         if not isinstance(text, str) or not 1 <= len(text.strip()) <= 2000:
-            raise ValueError('Введите ситуацию длиной от 1 до 2000 символов.')
+            raise ValueError('Enter a situation between 1 and 2,000 characters long.')
         text = text.strip()
         features = features_for(text)
         if not features or len(features) > 200:
-            raise ValueError('Ситуация должна содержать от 1 до 200 разных слов или чисел.')
+            raise ValueError('The situation must contain between 1 and 200 distinct words or numbers.')
         if len(self._state['decisions']) >= 100:
-            raise ValueError('Достигнут предел 100 решений в этой сессии.')
+            raise ValueError('This session has reached the limit of 100 decisions.')
         candidates = []
         for exp in self._state['experiences']:
             score = similarity(features, exp['situation_features'])
@@ -132,7 +132,7 @@ class Recall:
                                 reason=mismatch)
             else:
                 action = adapt_transferred_action(exp['action'], original, text)
-                reason = f"Использован подтверждённый опыт №{exp['id']}. Сходство: {score:.0%}."
+                reason = f"Reused confirmed experience #{exp['id']}. Similarity: {score:.0%}."
                 source = 'EXPERIENCE'
                 evidence = dict(experience=deepcopy(exp), similarity=score,
                                 score=exp['score'], action=action)
@@ -158,15 +158,15 @@ class Recall:
 
     def save_outcome(self, decision_id, success, score, feedback):
         if type(decision_id) is not int or not 1 <= decision_id <= len(self._state['decisions']):
-            raise ValueError('Выберите существующее решение.')
+            raise ValueError('Select an existing decision.')
         if type(success) is not bool:
-            raise ValueError('Успех должен быть отмечен или снят.')
+            raise ValueError('Success must be either checked or unchecked.')
         if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 1:
-            raise ValueError('Оценка должна быть числом от 0 до 1.')
+            raise ValueError('Enter a numeric score between 0 and 1.')
         if not isinstance(feedback, str) or len(feedback) > 1000:
-            raise ValueError('Обратная связь: не более 1000 символов.')
+            raise ValueError('Feedback must be no longer than 1,000 characters.')
         if any(o['decision_id'] == decision_id for o in self._state['outcomes']):
-            raise ValueError('Исход этого решения уже сохранён.')
+            raise ValueError('An outcome has already been saved for this decision.')
         decision = self._state['decisions'][decision_id - 1]
         situation = self._state['situations'][decision['situation_id'] - 1]
         outcome = dict(decision_id=decision_id, success=success, score=float(score), feedback=normalize(feedback))

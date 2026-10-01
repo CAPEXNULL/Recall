@@ -48,7 +48,7 @@ def create_app(model=None):
             sid = session.get('sid')
             if sid not in states:
                 if len(states) >= 1000:
-                    return 'Демонстрация временно занята. Попробуйте позже.', 503
+                    return 'The demo is temporarily busy. Please try again later.', 503
                 sid = secrets.token_urlsafe(24)
                 session['sid'] = sid
                 states[sid] = BrowserState(Recall(model if model is not None else NebiusClient()))
@@ -62,7 +62,7 @@ def create_app(model=None):
                               success=request.form.get('success') == 'on',
                               score=request.form.get('score', '0.8'), feedback=request.form.get('feedback', ''))
                 if not secrets.compare_digest(request.form.get('nonce', ''), state.nonce):
-                    error = 'Форма устарела или уже отправлена. Проверьте результат и повторите при необходимости.'
+                    error = 'This form has expired or has already been submitted. Check the result before trying again.'
                 else:
                     state.nonce = secrets.token_urlsafe(24)
                     try:
@@ -73,10 +73,10 @@ def create_app(model=None):
                                 identifier = int(request.form.get('decision_id', ''))
                                 score = float(values['score'].replace(',', '.'))
                             except ValueError:
-                                raise ValueError('Оценка должна быть числом от 0 до 1.') from None
+                                raise ValueError('Enter a numeric score between 0 and 1.') from None
                             state.core.save_outcome(identifier, values['success'], score, values['feedback'])
                         else:
-                            raise ValueError('Неизвестное действие.')
+                            raise ValueError('Unknown operation.')
                         return redirect(url_for('index'), code=303)
                     except (ValueError, ModelError) as exc:
                         error = str(exc)
@@ -97,14 +97,14 @@ def create_app(model=None):
 
     @app.errorhandler(413)
     def too_large(_):
-        return 'Слишком большой ввод. Вернитесь назад и сократите текст.', 413
+        return 'Your input is too large. Go back and shorten the text.', 413
 
     return app
 
 
 PAGE = '''<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Recall — решения с памятью</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recall — Decisions informed by experience</title>
 <style>
 :root{color-scheme:light;--ink:#182a32;--muted:#52656c;--line:#cfdbd7;--green:#176249;--bg:#f3f5ef}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
@@ -127,56 +127,75 @@ button:hover:not(:disabled){background:#114c38}:focus-visible{outline:3px solid 
 .memory{padding:12px 0;border-top:1px solid var(--line);font-size:14px;overflow-wrap:anywhere}.metrics{display:flex;gap:22px;margin-bottom:16px;font-size:13px;color:var(--muted)}.metrics strong{color:var(--ink);font-size:22px;display:block}
 .evidence{background:#edf6f0;border-left:3px solid var(--green);padding:15px;border-radius:5px;font-size:14px;overflow-wrap:anywhere}footer{color:var(--muted);font-size:12px;margin-top:24px}
 @media(max-width:740px){main{padding:22px 16px}.grid{grid-template-columns:1fr}header{align-items:flex-start;flex-wrap:wrap}.card{padding:20px}.row{grid-template-columns:1fr}h1{letter-spacing:-.8px}}
+
+/* Compact workspace: keep all four steps visible on desktop. */
+main{max-width:1800px;padding:16px 24px}header{justify-content:flex-start;gap:20px;margin-bottom:8px}
+h1{font-size:18px;line-height:1.3;letter-spacing:0;margin:0}.brand{font-size:26px}
+.flow{margin:8px 0 12px;font-size:13px;gap:8px 12px}
+.grid{gap:14px}.card{padding:12px;border-radius:12px}.card+.card{margin-top:14px}
+h2{font-size:17px;margin-bottom:8px}h3{font-size:14px;margin:12px 0 6px}
+label{margin-bottom:4px}textarea,input[type=text]{padding:8px 10px;font-size:14px}
+#situation{min-height:64px;height:72px}#feedback{min-height:36px;height:40px}
+.help{font-size:12px;margin:4px 0 6px}.row{gap:12px;margin:6px 0}
+button{padding:10px 16px;font-size:14px}.empty{padding:12px}.action{font-size:19px;margin:10px 0}
+.notice{padding:8px 12px;margin:0 0 10px}.metrics{margin-bottom:8px}.memory{padding:8px 0}
+.evidence{padding:12px}footer{font-size:11px;margin-top:10px;line-height:1.4}
+@media(min-width:1100px) and (min-height:680px){
+ main{height:100dvh;display:flex;flex-direction:column}
+ .grid{flex:1;min-height:0;grid-template-columns:1fr 1fr 1.15fr;grid-template-rows:minmax(230px,0.9fr) minmax(285px,1.1fr);align-items:stretch}
+ .grid>div{display:contents}.card{overflow:auto;scrollbar-gutter:stable}.card+.card{margin-top:0}
+ .grid>div:first-child>.card:first-child{grid-column:1;grid-row:1}
+ .grid>div:first-child>.card:last-child{grid-column:1;grid-row:2}
+ #decision{grid-column:2;grid-row:1 / 3}#experience{grid-column:3;grid-row:1 / 3}
+}
+@media(max-width:740px){main{padding:12px}.grid{grid-template-columns:1fr}header{gap:6px 14px}h1{font-size:15px}.card{padding:14px}.row{grid-template-columns:1fr 1fr}}
 </style></head><body><main>
-<header><div class="brand"><span>↳</span> recall</div><div class="pill">Опыт, который помогает решать</div></header>
-<div class="eyebrow">Решение → результат → опыт</div>
-<h1>Каждое решение —<br>начало нового опыта.</h1>
-<p class="intro">Опишите ситуацию, проверьте решение на практике и сохраните результат. В похожей ситуации Recall предложит действие из подтверждённого опыта.</p>
-<div class="flow"><span>01 · Ситуация</span><span>→</span><span>02 · Решение</span><span>→</span><span>03 · Исход</span><span>→</span><span>04 · Перенос опыта</span></div>
-{% if testing %}<div class="notice" id="mode">Тестовая модель / Test double — без обращения к Nebius.</div>
-{% elif not ready %}<div class="notice" id="mode">Модель пока не подключена. Для первого решения нужен настроенный доступ к Nebius.</div>{% endif %}
+<header><div class="brand"><span>&#8627;</span> recall</div><h1>Decisions informed by experience</h1></header>
+<div class="flow"><span>01 · Situation</span><span>→</span><span>02 · Decision</span><span>→</span><span>03 · Outcome</span><span>→</span><span>04 · Experience transfer</span></div>
+{% if testing %}<div class="notice" id="mode">Test double — no requests are sent to Nebius.</div>
+{% elif not ready %}<div class="notice" id="mode">The model is not connected yet. Configure Nebius access to get your first decision.</div>{% endif %}
 {% if error %}<div class="notice error" id="error" role="alert">{{ error }}</div>{% endif %}
 <div class="grid"><div>
-<section class="card"><h2><span class="step">01</span>Новая ситуация</h2>
+<section class="card"><h2><span class="step">01</span>New situation</h2>
 <form method="post" id="decision-form"><input type="hidden" name="nonce" value="{{ nonce }}"><input type="hidden" name="operation" value="decide">
-<label for="situation">Ситуация / Situation</label><textarea id="situation" name="situation" maxlength="2000" required aria-describedby="situation-help">{{ values.situation }}</textarea>
-<p class="help" id="situation-help">Опишите проблему и важные условия. До 2000 символов.</p>
-<button id="decide" type="submit">Получить решение / Get decision</button></form></section>
-<section class="card" aria-labelledby="outcome-title"><h2 id="outcome-title"><span class="step">03</span>Фактический исход</h2>
-<p class="help">{% if latest %}Для решения №{{ latest.id }}. {% if saved %}Исход сохранён.{% else %}Оцените результат после проверки действия.{% endif %}{% else %}Сначала получите решение.{% endif %}</p>
+<label for="situation">Situation</label><textarea id="situation" name="situation" maxlength="2000" required aria-describedby="situation-help">{{ values.situation }}</textarea>
+<p class="help" id="situation-help">Describe the problem and any relevant constraints. Up to 2,000 characters.</p>
+<button id="decide" type="submit">Get decision</button></form></section>
+<section class="card" aria-labelledby="outcome-title"><h2 id="outcome-title"><span class="step">03</span>Actual outcome</h2>
+<p class="help">{% if latest %}For decision #{{ latest.id }}. {% if saved %}Outcome saved.{% else %}Rate the outcome after trying the action.{% endif %}{% else %}Get a decision first.{% endif %}</p>
 <form method="post" id="outcome-form"><input type="hidden" name="nonce" value="{{ nonce }}"><input type="hidden" name="operation" value="outcome"><input type="hidden" name="decision_id" value="{{ latest.id if latest else '' }}">
-<div class="row"><label class="check" for="success"><input id="success" type="checkbox" name="success" {% if values.success %}checked{% endif %}>Успех / Success</label>
-<div><label for="score">Оценка / Score · 0–1</label><input id="score" name="score" type="text" inputmode="decimal" maxlength="20" value="{{ values.score }}" required></div></div>
-<label for="feedback">Обратная связь / Feedback</label><textarea id="feedback" name="feedback" maxlength="1000">{{ values.feedback }}</textarea>
-<p class="help">Перенос возможен при успехе и оценке от 0,5.</p>
-<button id="save" type="submit" {% if not latest or saved %}disabled{% endif %}>Сохранить исход / Save outcome</button></form></section>
+<div class="row"><label class="check" for="success"><input id="success" type="checkbox" name="success" {% if values.success %}checked{% endif %}>Success</label>
+<div><label for="score">Score · 0–1</label><input id="score" name="score" type="text" inputmode="decimal" maxlength="20" value="{{ values.score }}" required></div></div>
+<label for="feedback">Feedback</label><textarea id="feedback" name="feedback" maxlength="1000">{{ values.feedback }}</textarea>
+<p class="help">An experience is eligible for transfer when the outcome is successful and the score is at least 0.5.</p>
+<button id="save" type="submit" {% if not latest or saved %}disabled{% endif %}>Save outcome</button></form></section>
 </div><div>
-<section class="card" id="decision" aria-labelledby="decision-title"><h2 id="decision-title"><span class="step">02</span>Решение / Decision</h2>
-{% if latest %}<span class="tag" id="source">{% if latest.source == 'MODEL' %}Модель / MODEL{% else %}Опыт / EXPERIENCE{% endif %}</span>
+<section class="card" id="decision" aria-labelledby="decision-title"><h2 id="decision-title"><span class="step">02</span>Decision</h2>
+{% if latest %}<span class="tag" id="source">{% if latest.source == 'MODEL' %}MODEL{% else %}EXPERIENCE{% endif %}</span>
 <div class="action" id="action">{{ latest.action }}</div><p class="reason" id="reason">{{ latest.reason }}</p>
-<h3>Признаки ситуации</h3><div class="wrap" id="features">{% for f in state.situations[-1].features %}<span class="feature">{{ f }}</span>{% endfor %}</div>
-{% else %}<div class="empty">Здесь появятся действие и объяснение решения.</div>{% endif %}</section>
-<section class="card" id="experience" aria-labelledby="experience-title"><h2 id="experience-title"><span class="step">04</span>Опыт / Experience</h2>
-<div class="metrics"><div><strong id="decision-count">{{ state.decisions|length }}</strong>решений</div><div><strong id="experience-count">{{ state.experiences|length }}</strong>записей опыта</div></div>
-{% for exp in state.experiences|reverse %}<div class="memory"><strong>Опыт №{{ exp.id }} · решение №{{ exp.decision_id }}</strong><p>{{ exp.action }}</p><span>{% if exp.success %}Успех{% else %}Неуспех{% endif %} · оценка {{ '%g'|format(exp.score) }}</span></div>
-{% else %}<div class="empty">Сохраните исход, чтобы появилась первая запись.</div>{% endfor %}
-<h3>Доказательство переноса / Transfer evidence</h3>
+<h3>Situation features</h3><div class="wrap" id="features">{% for f in state.situations[-1].features %}<span class="feature">{{ f }}</span>{% endfor %}</div>
+{% else %}<div class="empty">The suggested action and its rationale will appear here.</div>{% endif %}</section>
+<section class="card" id="experience" aria-labelledby="experience-title"><h2 id="experience-title"><span class="step">04</span>Experience</h2>
+<div class="metrics"><div><strong id="decision-count">{{ state.decisions|length }}</strong>decisions</div><div><strong id="experience-count">{{ state.experiences|length }}</strong>saved experiences</div></div>
+{% for exp in state.experiences|reverse %}<div class="memory"><strong>Experience #{{ exp.id }} · decision #{{ exp.decision_id }}</strong><p>{{ exp.action }}</p><span>{% if exp.success %}Successful{% else %}Unsuccessful{% endif %} · score {{ '%g'|format(exp.score) }}</span></div>
+{% else %}<div class="empty">Save an outcome to create your first experience.</div>{% endfor %}
+<h3>Transfer evidence</h3>
 <div id="evidence">{% if latest and latest.evidence %}{% set ev = latest.evidence %}<div class="evidence">
 {% if ev.status %}
 <strong id="transfer-status">{{ ev.status }}</strong><p>{{ ev.reason }}</p>
-<p>Отклонён опыт №{{ ev.experience.id }}. Сходство: <span id="similarity">{{ '%.2f'|format(ev.similarity) }}</span>.</p>
-<p>Прошлое действие не перенесено. Новое решение получено от модели.</p>
+<p>Experience not transferred: #{{ ev.experience.id }}. Similarity: <span id="similarity">{{ '%.2f'|format(ev.similarity) }}</span>.</p>
+<p>The previous action was not transferred. The model provided a new decision.</p>
 {% else %}
-<strong>Источник: опыт №{{ ev.experience.id }}</strong><p>Ситуация №{{ ev.experience.situation_id }} → решение №{{ ev.experience.decision_id }}</p>
-<p>Сходство: <span id="similarity">{{ '%.2f'|format(ev.similarity) }}</span> · оценка: {{ '%g'|format(ev.score) }}</p>
-<p>Признаки источника: {{ ev.experience.situation_features|join(', ') }}</p><p>Выбранное действие: {{ ev.action }}</p>
-<p>Новый запрос к модели не потребовался.</p>{% endif %}</div>{% else %}<p class="help">Появится, когда новая ситуация использует подходящий успешный опыт.</p>{% endif %}</div></section>
+<strong>Source: experience #{{ ev.experience.id }}</strong><p>Situation #{{ ev.experience.situation_id }} → decision #{{ ev.experience.decision_id }}</p>
+<p>Similarity: <span id="similarity">{{ '%.2f'|format(ev.similarity) }}</span> · score: {{ '%g'|format(ev.score) }}</p>
+<p>Source features: {{ ev.experience.situation_features|join(', ') }}</p><p>Selected action: {{ ev.action }}</p>
+<p>No additional model request was needed.</p>{% endif %}</div>{% else %}<p class="help">Transfer evidence will appear when a new situation reuses a relevant successful experience.</p>{% endif %}</div></section>
 </div></div>
-<footer>Память сохраняется при обновлении страницы и очищается при перезапуске сервера или после суток бездействия. Сходство определяется по словам; смысловые различия требуют вашей проверки. Recall предлагает действие, а решение о его применении принимаете вы.</footer>
+<footer>Memory persists when you refresh the page. It is cleared when the server restarts or after 24 hours of inactivity. Similarity is based on words; review differences in meaning yourself. Recall suggests an action. You decide whether to take it.</footer>
 </main><script>
 document.querySelectorAll('form').forEach(form=>form.addEventListener('submit',()=>{
 form.querySelector('button').disabled=true;
-form.querySelector('button').textContent='Выполняется…';
+form.querySelector('button').textContent='Processing…';
 }));
 </script></body></html>'''
 

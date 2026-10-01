@@ -23,7 +23,7 @@ class ModelError(RuntimeError):
 
 
 def validate_output(value, expected_features):
-    error = 'Модель вернула ответ неверного формата. Состояние не изменено.'
+    error = 'The model returned an invalid response format. No changes were saved.'
     if not isinstance(value, dict) or set(value) != {'features', 'action', 'reason'}:
         raise ModelError(error)
     features = value['features']
@@ -33,7 +33,7 @@ def validate_output(value, expected_features):
     from unicodedata import normalize as nfc
     features = sorted(set(nfc('NFC', normalize(f).casefold()) for f in features))
     if features != expected_features:
-        raise ModelError('Признаки ответа модели не совпали с признаками ситуации. Состояние не изменено.')
+        raise ModelError('The response features did not match the situation features. No changes were saved.')
     for field, limit in [('action', 500), ('reason', 1000)]:
         if not isinstance(value[field], str) or not 1 <= len(normalize(value[field])) <= limit:
             raise ModelError(error)
@@ -58,7 +58,7 @@ class NebiusClient:
     def _request(self, path, payload=None):
         key = os.environ.get('NEBIUS_API_KEY')
         if not key:
-            raise ModelError('Не настроен доступ к Nebius. Добавьте ключ на сервере.')
+            raise ModelError('Nebius access is not configured. Add an API key on the server.')
         data = json.dumps(payload, ensure_ascii=False).encode('utf-8') if payload is not None else None
         req = Request(BASE_URL + path, data=data,
                       headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
@@ -66,15 +66,15 @@ class NebiusClient:
             with build_opener(NoRedirect()).open(req, timeout=45) as response:
                 raw = response.read(1_000_001)
                 if len(raw) > 1_000_000:
-                    raise ModelError('Ответ Nebius превысил допустимый размер.')
+                    raise ModelError('The Nebius response exceeded the allowed size.')
                 return json.loads(raw), response.status
         except HTTPError as exc:
             # Do not expose upstream bodies, headers, prompts, or credentials.
-            raise ModelError(f'Nebius отклонил запрос (код {exc.code}). Проверьте доступ и модель.') from None
+            raise ModelError(f'Nebius rejected the request (HTTP {exc.code}). Check API access and the selected model.') from None
         except (URLError, TimeoutError, OSError):
-            raise ModelError('Nebius недоступен или не ответил вовремя. Состояние не изменено.') from None
+            raise ModelError('Nebius is unavailable or the request timed out. No changes were saved.') from None
         except (ValueError, UnicodeError):
-            raise ModelError('Nebius вернул некорректный ответ. Состояние не изменено.') from None
+            raise ModelError('Nebius returned an invalid response. No changes were saved.') from None
 
     def available_models(self):
         body, _ = self._request('/models')
@@ -84,7 +84,7 @@ class NebiusClient:
     def decide(self, text, features):
         self.last_metadata = None
         if not self.ready:
-            raise ModelError('Доступ к модели не настроен. Нужны ключ Nebius и выбранная модель NVIDIA Nemotron.')
+            raise ModelError('Model access is not configured. A Nebius API key and an NVIDIA Nemotron model are required.')
         payload = {
             'model': self.model_id, 'temperature': 0, 'max_tokens': 2048,
             'response_format': {'type': 'json_schema', 'json_schema': {
@@ -104,10 +104,10 @@ class NebiusClient:
         try:
             choice = body['choices'][0]
             if choice['finish_reason'] != 'stop' or choice['message'].get('refusal'):
-                raise ModelError('Модель не завершила допустимый ответ. Состояние не изменено.')
+                raise ModelError('The model did not complete a valid response. No changes were saved.')
             result = validate_output(json.loads(choice['message']['content']), features)
         except (KeyError, IndexError, TypeError, ValueError):
-            raise ModelError('Модель вернула некорректный ответ. Состояние не изменено.') from None
+            raise ModelError('The model returned an invalid response. No changes were saved.') from None
         self.last_metadata = dict(endpoint=BASE_URL + '/chat/completions', model_id=self.model_id,
                                   http_status=status, schema_valid=True, finish_reason='stop')
         return result

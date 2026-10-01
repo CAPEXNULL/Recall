@@ -36,6 +36,9 @@ def critical_mismatch(action, original, current):
 
     operators = {'выполнить', 'сделать', 'провести', 'осуществить'}
 
+    def english_terms(text):
+        return re.sub(r'\broll\s+back\b', 'rollback', text.casefold())
+
     def restrictions(text):
         result = {}
         for clause in re.split(r'[.!?;\n,]+', normalize(text).casefold()):
@@ -52,10 +55,18 @@ def critical_mismatch(action, original, current):
                 match = re.fullmatch(rf'(\w+)(?:\s+\w+){{0,2}}\s+{negative}', clause)
             if match and match[1] not in {'не', 'нет', 'если'}:
                 result[stem(match[1])] = clause
+            english = english_terms(clause)
+            constraint = r'(?:unavailable|not available|impossible|not possible|prohibited|forbidden|disabled|not permitted|not allowed)'
+            match = re.fullmatch(rf'(?:the\s+)?(\w+)(?:\s+(?:is|are))?\s+{constraint}', english)
+            if not match:
+                match = re.fullmatch(r'(?:do not|cannot|can not|must not)\s+'
+                                     r'(?:(?:perform|execute)\s+)?(\w+)(?:\s+.+)?', english)
+            if match:
+                result[stem(match[1])] = clause
         return result
 
     previous = restrictions(original)
-    action_words = {stem(word) for word in features_for(action) if word not in operators}
+    action_words = {stem(word) for word in features_for(english_terms(action)) if word not in operators}
     for subject, clause in restrictions(current).items():
         if subject in action_words and subject not in previous:
             return f'New constraint on the action: “{clause}”.'

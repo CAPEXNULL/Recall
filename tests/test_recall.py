@@ -225,6 +225,74 @@ class CriticalMismatchRegression(unittest.TestCase):
         self.assertEqual(state.core.snapshot()['experiences'][-1]['action'], self.fallback)
 
 
+class EnglishDemoRegression(unittest.TestCase):
+    def test_english_demo_flow(self):
+        class EnglishModel:
+            ready = True
+            calls = 0
+            def decide(self, text, features):
+                self.calls += 1
+                action = ('Roll back service Alpha to the previous version' if self.calls == 1
+                          else 'Inspect the error logs for service Beta')
+                return dict(features=features, action=action, reason='Check the result before taking further action.')
+        model = EnglishModel()
+        app = create_app(model)
+        client = app.test_client()
+        client.get('/')
+        state = next(iter(app.extensions['recall_states'].values()))
+        def post(**data):
+            response = client.post('/', data=dict(nonce=state.nonce, **data), follow_redirects=True)
+            self.assertEqual(response.status_code, 200)
+            html = response.get_data(as_text=True)
+            self.assertNotRegex(html, r'[\u0400-\u04ff]')
+            return html
+        post(operation='decide', situation=SCENARIO['situation_a'])
+        post(operation='outcome', decision_id='1', success='on', score='.8', feedback=SCENARIO['outcome']['feedback'])
+        original_experience = state.core.snapshot()['experiences'][0]
+        html = post(operation='decide', situation=SCENARIO['situation_b'])
+        self.assertIn('Roll back service Beta to the previous version', html)
+        self.assertEqual(model.calls, 1)
+        self.assertEqual(state.core.snapshot()['decisions'][-1]['source'], 'EXPERIENCE')
+        blocked = SCENARIO['situation_b'].replace('Rollback is available', 'Rollback is unavailable')
+        html = post(operation='decide', situation=blocked)
+        self.assertIn('TRANSFER BLOCKED: critical mismatch', html)
+        self.assertIn('Inspect the error logs for service Beta', html)
+        self.assertNotIn('Selected action:', html)
+        self.assertEqual(model.calls, 2)
+        result = state.core.snapshot()['decisions'][-1]
+        self.assertEqual(result['source'], 'MODEL')
+        self.assertEqual(result['evidence']['experience'], original_experience)
+        self.assertEqual(result['evidence']['similarity'],
+                         similarity(features_for(SCENARIO['situation_a']), features_for(blocked)))
+        self.assertEqual(state.core.snapshot()['experiences'], [original_experience])
+
+    def test_english_constraint_scope(self):
+        for action, constraint in [
+            ('Roll back service Orion', 'Rollback is unavailable'),
+            ('Perform a rollback', 'Rollback is not available'),
+            ('Roll back service Vega', 'Do not roll back service Vega'),
+            ('Restart service Phoenix', 'Restart is forbidden'),
+            ('Restart service Phoenix', 'Cannot restart service Phoenix'),
+        ]:
+            with self.subTest(constraint=constraint):
+                self.assertIsNotNone(critical_mismatch(action, '', constraint))
+        for constraint in ('Rollback is available', 'Rollback is not forbidden',
+                           'Logs are unavailable', 'Do not restart service Beta'):
+            self.assertIsNone(critical_mismatch('Roll back service Beta', '', constraint))
+
+    def test_model_requests_english(self):
+        with patch.dict(os.environ, {'NEBIUS_API_KEY':'test-only-placeholder', 'NEBIUS_MODEL_ID':'nvidia/test-nemotron'}):
+            client = NebiusClient()
+            features = features_for(SCENARIO['situation_a'])
+            answer = dict(features=features, action='Roll back service Alpha', reason='The issue followed an update.')
+            reply = {'choices':[{'finish_reason':'stop', 'message':{'content':canonical(answer)}}]}
+            with patch.object(client, '_request', return_value=(reply, 200)) as transport:
+                client.decide(SCENARIO['situation_a'], features)
+                prompt = transport.call_args.args[1]['messages'][0]['content']
+                self.assertIn('Write action and reason in English', prompt)
+                self.assertNotIn('in Russian', prompt)
+
+
 class Acceptance(unittest.TestCase):
     def test_01_core_outcome(self):
         model = FakeModel()

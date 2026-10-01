@@ -162,10 +162,15 @@ button:hover:not(:disabled){background:#114c38}:focus-visible{outline:3px solid 
 {% else %}<div class="empty">Сохраните исход, чтобы появилась первая запись.</div>{% endfor %}
 <h3>Доказательство переноса / Transfer evidence</h3>
 <div id="evidence">{% if latest and latest.evidence %}{% set ev = latest.evidence %}<div class="evidence">
+{% if ev.status %}
+<strong id="transfer-status">{{ ev.status }}</strong><p>{{ ev.reason }}</p>
+<p>Отклонён опыт №{{ ev.experience.id }}. Сходство: <span id="similarity">{{ '%.2f'|format(ev.similarity) }}</span>.</p>
+<p>Прошлое действие не перенесено. Новое решение получено от модели.</p>
+{% else %}
 <strong>Источник: опыт №{{ ev.experience.id }}</strong><p>Ситуация №{{ ev.experience.situation_id }} → решение №{{ ev.experience.decision_id }}</p>
 <p>Сходство: <span id="similarity">{{ '%.2f'|format(ev.similarity) }}</span> · оценка: {{ '%g'|format(ev.score) }}</p>
 <p>Признаки источника: {{ ev.experience.situation_features|join(', ') }}</p><p>Выбранное действие: {{ ev.action }}</p>
-<p>Новый запрос к модели не потребовался.</p></div>{% else %}<p class="help">Появится, когда новая ситуация использует подходящий успешный опыт.</p>{% endif %}</div></section>
+<p>Новый запрос к модели не потребовался.</p>{% endif %}</div>{% else %}<p class="help">Появится, когда новая ситуация использует подходящий успешный опыт.</p>{% endif %}</div></section>
 </div></div>
 <footer>Память сохраняется при обновлении страницы и очищается при перезапуске сервера или после суток бездействия. Сходство определяется по словам; смысловые различия требуют вашей проверки. Recall предлагает действие, а решение о его применении принимаете вы.</footer>
 </main><script>

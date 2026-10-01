@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from app import SCENARIO, create_app
 from model_client import NebiusClient, ModelError, OUTPUT_SCHEMA, validate_output
-from recall_core import Recall, features_for, similarity
+from recall_core import Recall, critical_mismatch, features_for, similarity
 
 FULL = os.environ.get('RECALL_FULL_RUN') == '1'
 RUN_ID = os.environ.get('RECALL_RUN_ID', 'local-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S'))
@@ -125,6 +125,104 @@ class TransferObjectRegression(unittest.TestCase):
         self.assertEqual(self.transfer('Альфа', 'Бета', generic), generic)
         ambiguous = 'Откатить версию сервиса Альфа Север до предыдущей'
         self.assertEqual(self.transfer('Альфа', 'Бета', ambiguous), ambiguous)
+
+
+class CriticalMismatchRegression(unittest.TestCase):
+    original = 'После обновления сервис Орион отвечает медленно, очередь запросов растёт. Доступен откат версии.'
+    current = original.replace('Орион', 'Вега').replace('Доступен откат версии', 'Откат версии недоступен')
+    action = 'Откатить версию сервиса Орион до предыдущей'
+    fallback = 'Проверить журнал ошибок сервиса Вега'
+    status = 'TRANSFER BLOCKED: critical mismatch'
+
+    def model(self):
+        owner = self
+        class ScriptedModel:
+            ready = True
+            calls = 0
+            def decide(self, text, features):
+                self.calls += 1
+                return dict(features=features, action=owner.action if self.calls == 1 else owner.fallback,
+                            reason='Локальный тестовый ответ.')
+        return ScriptedModel()
+
+    def prepared(self):
+        model = self.model()
+        core = Recall(model)
+        first = core.decide(self.original)
+        exp = core.save_outcome(first['id'], True, .8, 'Тестовый исход')
+        return core, model, exp
+
+    def test_blocked_fallback_and_determinism(self):
+        snapshots = []
+        for _ in range(2):
+            core, model, exp = self.prepared()
+            result = core.decide(self.current)
+            self.assertEqual(result['source'], 'MODEL')
+            self.assertEqual(result['action'], self.fallback)
+            self.assertEqual(model.calls, 2)  # Initial decision + ordinary fallback only.
+            ev = result['evidence']
+            self.assertEqual(ev['status'], self.status)
+            self.assertIn('недоступен', ev['reason'])
+            self.assertNotIn('action', ev)
+            self.assertEqual(ev['experience'], exp)
+            self.assertGreaterEqual(ev['similarity'], .5)
+            self.assertEqual(ev['similarity'], similarity(features_for(self.original), features_for(self.current)))
+            self.assertEqual(core.snapshot()['experiences'], [exp])
+            snapshots.append(core.snapshot())
+        self.assertEqual(*snapshots)
+
+    def test_constraint_scope(self):
+        for text in ['Откат недоступен.', 'Недоступен откат версии.',
+                     'Откат версии не доступен.', 'Нельзя откатить версию.',
+                     'Откат запрещён.']:
+            with self.subTest(text=text):
+                self.assertIsNotNone(critical_mismatch(self.action, self.original, text))
+        for text in ['Доступен откат версии.', 'Журнал недоступен.',
+                     'Откат не запрещён.', 'Откат не невозможен.']:
+            with self.subTest(text=text):
+                self.assertIsNone(critical_mismatch(self.action, self.original, text))
+        self.assertIsNotNone(critical_mismatch('Выполнить удаление файла',
+                                              'Удаление разрешено.', 'Удаление запрещено.'))
+        self.assertIsNone(critical_mismatch(self.action, 'Откат запрещён.', 'Откат запрещён.'))
+        self.assertIsNone(critical_mismatch('Выполнить откат версии', '', 'Нельзя выполнить удаление.'))
+        self.assertIsNotNone(critical_mismatch('Выполнить откат версии', '', 'Нельзя выполнить откат версии.'))
+        self.assertIsNotNone(critical_mismatch('Выполнить откат версии', '', 'Запрещено выполнить откат версии.'))
+
+    def test_fallback_error_preserves_state_and_status(self):
+        core, model, _ = self.prepared()
+        before = core.snapshot()
+        with patch.object(model, 'decide', side_effect=ModelError('Тестовая ошибка')) as call:
+            with self.assertRaisesRegex(ModelError, self.status):
+                core.decide(self.current)
+            self.assertEqual(call.call_count, 1)
+        self.assertEqual(core.snapshot(), before)
+
+    def test_demo_flow_valid_then_blocked(self):
+        model = self.model()
+        app = create_app(model)
+        client = app.test_client()
+        self.assertEqual(client.get('/').status_code, 200)
+        state = next(iter(app.extensions['recall_states'].values()))
+        def post(**data):
+            response = client.post('/', data=dict(nonce=state.nonce, **data), follow_redirects=True)
+            self.assertEqual(response.status_code, 200)
+            return response.get_data(as_text=True)
+        post(operation='decide', situation=self.original)
+        post(operation='outcome', decision_id='1', success='on', score='.8', feedback='Тестовый исход')
+        html = post(operation='decide', situation=self.original.replace('Орион', 'Вега'))
+        self.assertIn('Откатить версию сервиса Вега до предыдущей', html)
+        self.assertIn('Новый запрос к модели не потребовался.', html)
+        self.assertNotIn(self.status, html)
+        self.assertEqual(model.calls, 1)
+        html = post(operation='decide', situation=self.current)
+        self.assertIn(self.status, html)
+        self.assertIn(self.fallback, html)
+        self.assertNotIn('Выбранное действие:', html)
+        self.assertNotIn('Новый запрос к модели не потребовался.', html)
+        self.assertEqual(model.calls, 2)
+        self.assertIn(self.status, client.get('/').get_data(as_text=True))
+        post(operation='outcome', decision_id='3', success='on', score='.8', feedback='Новый исход')
+        self.assertEqual(state.core.snapshot()['experiences'][-1]['action'], self.fallback)
 
 
 class Acceptance(unittest.TestCase):

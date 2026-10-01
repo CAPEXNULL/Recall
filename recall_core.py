@@ -22,6 +22,46 @@ def similarity(left, right):
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
+def critical_mismatch(action, original, current):
+    """Detect explicit action prohibitions/unavailability, not general semantics.
+
+    Supported local clauses: 'откат [версии] недоступен',
+    'недоступен откат [версии]', 'нельзя откатить ...'.
+    The vocabulary describes constraints, never particular services or objects.
+    """
+    negative = r'(?:не\s*доступ(?:ен|на|но|ны)|не\s*возмож(?:ен|на|но|ны)|запрещ[её]н(?:а|о|ы)?)'
+
+    def stem(word):
+        return re.sub(r'(?:ить|ать|ять|ы|а|у|ом|е)$', '', word)
+
+    operators = {'выполнить', 'сделать', 'провести', 'осуществить'}
+
+    def restrictions(text):
+        result = {}
+        for clause in re.split(r'[.!?;\n,]+', normalize(text).casefold()):
+            clause = clause.strip()
+            if re.search(r'\bне\s+(?:запрещ[её]н\w*|невозмож\w*|недоступ\w*)\b', clause):
+                continue
+            # Anchoring avoids turning 'не запрещён' into a prohibition.
+            match = re.fullmatch(r'(?:нельзя|невозможно|запрещено)\s+'
+                                 r'(?:(?:выполнить|сделать|провести|осуществить)\s+)?'
+                                 r'(\w+)(?:\s+.+)?', clause)
+            if not match:
+                match = re.fullmatch(rf'{negative}\s+(\w+)(?:\s+[^.!?;]+)?', clause)
+            if not match:
+                match = re.fullmatch(rf'(\w+)(?:\s+\w+){{0,2}}\s+{negative}', clause)
+            if match and match[1] not in {'не', 'нет', 'если'}:
+                result[stem(match[1])] = clause
+        return result
+
+    previous = restrictions(original)
+    action_words = {stem(word) for word in features_for(action) if word not in operators}
+    for subject, clause in restrictions(current).items():
+        if subject in action_words and subject not in previous:
+            return f'Новое ограничение для действия: «{clause}».'
+    return None
+
+
 def adapt_transferred_action(action, original, current):
     """Bind an explicit service name only when the surrounding situation agrees.
 
@@ -79,20 +119,33 @@ class Recall:
             if exp['success'] and exp['score'] >= SUCCESS_SCORE_THRESHOLD and score >= TRANSFER_THRESHOLD:
                 candidates.append((score, exp))
         evidence = None
+        transferred = False
         if candidates:
             score, exp = min(candidates, key=lambda item: (
                 -item[0], -item[1]['score'], normalize(item[1]['action']), item[1]['id']))
             original = next((s['text'] for s in self._state['situations']
                              if s['id'] == exp['situation_id']), '')
-            action = adapt_transferred_action(exp['action'], original, text)
-            reason = f"Использован подтверждённый опыт №{exp['id']}. Сходство: {score:.0%}."
-            source = 'EXPERIENCE'
-            evidence = dict(experience=deepcopy(exp), similarity=score,
-                            score=exp['score'], action=action)
-        else:
+            mismatch = critical_mismatch(exp['action'], original, text)
+            if mismatch:
+                evidence = dict(experience=deepcopy(exp), similarity=score,
+                                score=exp['score'], status='TRANSFER BLOCKED: critical mismatch',
+                                reason=mismatch)
+            else:
+                action = adapt_transferred_action(exp['action'], original, text)
+                reason = f"Использован подтверждённый опыт №{exp['id']}. Сходство: {score:.0%}."
+                source = 'EXPERIENCE'
+                evidence = dict(experience=deepcopy(exp), similarity=score,
+                                score=exp['score'], action=action)
+                transferred = True
+        if not transferred:
             # Validate even injected model adapters, before any state mutation.
-            from model_client import validate_output
-            answer = validate_output(self.model.decide(text, features), features)
+            from model_client import ModelError, validate_output
+            try:
+                answer = validate_output(self.model.decide(text, features), features)
+            except ModelError as exc:
+                if evidence and evidence.get('status'):
+                    raise ModelError(f"{evidence['status']}. {evidence['reason']} {exc}") from exc
+                raise
             features, action, reason = answer['features'], answer['action'], answer['reason']
             source = 'MODEL'
         identifier = len(self._state['decisions']) + 1

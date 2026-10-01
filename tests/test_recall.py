@@ -81,6 +81,52 @@ class FakeModel:
                     reason='Проблема появилась после обновления; проверьте восстановление задержки после отката.')
 
 
+class TransferObjectRegression(unittest.TestCase):
+    def transfer(self, old, new, action):
+        original = f'После обновления сервис {old} отвечает медленно, очередь запросов растёт. Доступен откат версии.'
+        current = f'После обновления сервис {new} отвечает медленно, очередь запросов растёт. Доступен откат версии.'
+        model = FakeModel()
+        with patch.object(model, 'decide', return_value=dict(
+                features=features_for(original), action=action, reason='Проверенное действие.')) as call:
+            core = Recall(model)
+            first = core.decide(original)
+            experience = core.save_outcome(first['id'], True, .8, 'Демонстрационный исход')
+            result = core.decide(current)
+            self.assertEqual(call.call_count, 1)
+        self.assertEqual(result['source'], 'EXPERIENCE')
+        self.assertEqual(result['evidence']['experience'], experience)
+        self.assertEqual(result['evidence']['similarity'],
+                         similarity(features_for(original), features_for(current)))
+        self.assertEqual(result['evidence']['action'], result['action'])
+        self.assertEqual(core.snapshot()['experiences'][0], experience)
+        self.assertEqual(core.snapshot()['decisions'][0], first)
+        return result['action']
+
+    def test_named_service_transfer(self):
+        for old, new in [('Альфа', 'Бета'), ('Орион', 'Вега'),
+                         ('Payments-v2', 'Billing-v3'), ('«Север API»', '«Юг API»')]:
+            with self.subTest(old=old, new=new):
+                self.assertEqual(self.transfer(old, new,
+                    f'Откатить версию сервиса {old} до предыдущей'),
+                    f'Откатить версию сервиса {new} до предыдущей')
+
+    def test_ambiguous_object_keeps_action(self):
+        action = 'Откатить версию сервиса Альфа до предыдущей'
+        for new in ['Бета и Гамма', 'Бета или сервис Гамма', 'без имени', 'Бета Север']:
+            with self.subTest(new=new):
+                self.assertEqual(self.transfer('Альфа', new, action), action)
+        self.assertEqual(self.transfer('Альфа и Гамма', 'Бета и Гамма', action), action)
+
+    def test_other_action_text_preserved(self):
+        action = 'Откатить версию сервиса Альфа до предыдущей; сохранить журнал Альфа.'
+        self.assertEqual(self.transfer('Альфа', 'Бета', action),
+                         'Откатить версию сервиса Бета до предыдущей; сохранить журнал Альфа.')
+        generic = 'Вернуться к предыдущей стабильной версии сервиса.'
+        self.assertEqual(self.transfer('Альфа', 'Бета', generic), generic)
+        ambiguous = 'Откатить версию сервиса Альфа Север до предыдущей'
+        self.assertEqual(self.transfer('Альфа', 'Бета', ambiguous), ambiguous)
+
+
 class Acceptance(unittest.TestCase):
     def test_01_core_outcome(self):
         model = FakeModel()

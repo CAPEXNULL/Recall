@@ -22,6 +22,40 @@ def similarity(left, right):
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
+def adapt_transferred_action(action, original, current):
+    """Bind an explicit service name only when the surrounding situation agrees.
+
+    Free-form or ambiguous object descriptions keep the confirmed action intact.
+    Only service-qualified names in the action are changed, never bare mentions.
+    """
+    service = re.compile(
+        r'(?<!\w)(?i:сервис(?:а|у|ом|е)?|services?)\s+'
+        r'(?P<name>«[^«»\n]+»|"[^"\n]+"|[A-ZА-ЯЁ][\w-]*)(?![\w-])')
+    before, after = list(service.finditer(original)), list(service.finditer(current))
+    if len(before) != 1 or len(after) != 1:
+        return action
+    old, new = before[0], after[0]
+    # Do not interpret a list or an unquoted multiword name as one object.
+    continuation = re.compile(r'^\s*(?:[,/&+]|(?:и|или|and|or)\b|[A-ZА-ЯЁ])')
+    if any(continuation.match(text[match.end():])
+           for text, match in ((original, old), (current, new))):
+        return action
+
+    def context(text, match):
+        return ' '.join((text[:match.start('name')] + '\0' +
+                         text[match.end('name'):]).casefold().split())
+
+    if context(original, old) != context(current, new):
+        return action
+    matches = list(service.finditer(action))
+    if len(matches) != 1 or matches[0]['name'] != old['name']:
+        return action
+    target = matches[0]
+    if continuation.match(action[target.end():]):
+        return action
+    return action[:target.start('name')] + new['name'] + action[target.end('name'):]
+
+
 class Recall:
     def __init__(self, model):
         self.model = model
@@ -48,7 +82,9 @@ class Recall:
         if candidates:
             score, exp = min(candidates, key=lambda item: (
                 -item[0], -item[1]['score'], normalize(item[1]['action']), item[1]['id']))
-            action = exp['action']
+            original = next((s['text'] for s in self._state['situations']
+                             if s['id'] == exp['situation_id']), '')
+            action = adapt_transferred_action(exp['action'], original, text)
             reason = f"Использован подтверждённый опыт №{exp['id']}. Сходство: {score:.0%}."
             source = 'EXPERIENCE'
             evidence = dict(experience=deepcopy(exp), similarity=score,
